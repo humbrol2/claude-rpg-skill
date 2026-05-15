@@ -2,7 +2,7 @@
 
 > Long-form RPG mode for Claude Code — persistent canon, finance ledger, anti-drift discipline.
 
-**📖 Launch post / design philosophy:** [Stop Your AI Narrator From Making Things Up](https://humbrol2.com/blog/claude-rpg-skill) — *(also in this repo at [`docs/launch-post.md`](docs/launch-post.md))*
+**📖 Launch post / design philosophy:** [Stop Your AI Narrator From Making Things Up](https://humbrol2.com/devblog/claude-rpg-skill/) — *(also in this repo at [`docs/launch-post.md`](docs/launch-post.md))*
 
 A skill + tool suite for running long-form, multi-session role-playing campaigns with Claude Code as the narrator. Designed for **campaigns that run weeks or months** where the usual LLM failure modes — canon drift, arithmetic slip, rule decay, hallucinated NPC histories — compound into nonsense.
 
