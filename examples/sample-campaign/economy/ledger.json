@@ -1,0 +1,23 @@
+{
+  "as_of_day": 12,
+  "currency": "silver",
+  "liquid": {
+    "operating": 47
+  },
+  "vehicles": [],
+  "facilities": [],
+  "weekly_realized_inflows": [],
+  "policies": [],
+  "history": [
+    {"day": 1, "type": "starting_balance", "delta": "+60 silver", "note": "starting funds at point of exile + 14 months of road work"},
+    {"day": 4, "type": "expense", "delta": "-3 silver", "note": "supplies and a meal at the last village before Brittle Hollow"},
+    {"day": 6, "type": "expense", "delta": "-2 silver", "note": "fee at a tollbridge"},
+    {"day": 11, "type": "expense", "delta": "-2 silver", "note": "first night at Maren's inn"},
+    {"day": 12, "type": "expense", "delta": "-2 silver", "note": "second night at Maren's inn"},
+    {"day": 12, "type": "expense", "delta": "-4 silver", "note": "two meals + a small medicine kit refill from Doss"}
+  ],
+  "non_liquid_assets": [
+    {"name": "The locked book", "value": "n/a — narrative critical", "location": "Veska's pack", "note": "see project_locked_book.md"},
+    {"name": "Traveling kit", "value": "~12 silver replacement cost", "location": "Veska's pack", "note": "cloak, knife, journal, basic herbs, fire-tin"}
+  ]
+}
