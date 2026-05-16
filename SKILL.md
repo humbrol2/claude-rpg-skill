@@ -47,6 +47,25 @@ Before narrating any named entity (NPCs, ships, locations, factions), consult th
 - If the entity is **genuinely new** (first-mention this session), state in-scene that this is a new entity. After the scene, propose a memory file for the user to confirm.
 - **Heritage suffixes (-Vor, -Threll, -Saen, -Daresh, -Khorr, -Vellith, etc.) are not parts of the name; they are Drakari formal-register address.** Always check the bare name. Per-campaign rules may override.
 
+### Canon-check before returning to canon-rich locations (resist novelty-default)
+
+Locations have canon too. Treat a return to a previously-canonical location with the same discipline as invoking a named NPC.
+
+- Before narrating any scene set at a previously-canonical location, read the relevant `project_*.md` files first.
+- Lead with what canon already establishes — what's known, what's recorded, what the network/archives can tell the PC now.
+- Do **NOT** introduce new mystery hooks, faint signals, unexplained anomalies, or "something at the edge of sensors" at established sites unless: (a) the player explicitly asks for new content there, or (b) the scene actively requires it (e.g., time has passed and a tracked thread should advance).
+- The narrative reflex at "return to old site" is to invent something. Resist it. The emotional weight of return *is* the scene.
+- If the player wants a new development there, they will ask.
+
+### Disambiguate ambiguous player references — never silently pick
+
+When the player uses a definite-article reference ("the derelict", "the contact", "the artifact", "the captain", "the station") that matches more than one canon entry, **pause and ask** — do not pick one and commit.
+
+- Patterns to watch: "the [noun]" where multiple canon entries fit.
+- One-line disambiguation: "Two fit — [A] or [B]?" Then continue once disambiguated.
+- Do not default to the most recent, most narratively interesting, or pattern-matched option. The cost of asking is one line; the cost of picking wrong is a mid-scene retcon.
+- Unambiguous references (only one canon match) need no pause — proceed normally.
+
 ### Canon file write-as-you-go (do NOT defer to "session end")
 
 When a new entity is introduced in play and the player has accepted it (explicitly approved, or implicitly by continuing to interact with it), **write a stub canon file the same response, not at "session end."** Session end may never come. Transcript-only canon drifts.
@@ -93,6 +112,16 @@ Each named character has a read-in tier (inner-circle, outer-circle, partial-rea
 ### Economy ledger consultation
 
 Before stating any numerical financial fact (liquid balance, weekly profit, vehicle valuation), consult the ledger. Do not narrate finance numbers from working memory or guesswork. If the ledger needs updating (time has advanced, a decision has been made), update it first, then report from it.
+
+### In-scene financial actions update the ledger immediately
+
+Any financial action narrated in-scene — purchases, tips, fees, gifts, donations, sales of any size — must update the running ledger **in the same response**, not later. The narrative is the trigger.
+
+- Treat in-scene financial flavor with the same discipline as explicit `/deploy` commands.
+- When reporting financial state at end of scene, derive from the updated ledger, not from working memory.
+- For very small amounts (sub-1% of liquid): bundle into a single "scene incidentals" line at end of scene rather than dropping them entirely.
+- This applies equally whether the player explicitly approved the action (e.g., "tip the rest") or it's incidental flavor (e.g., a narrated dock fee).
+- The failure mode this prevents: narrating a 664 cr tip and then reporting "664 cr remaining" three lines later because the action lived in narrative memory only. Real failure, real campaign.
 
 ### Time-skip discipline
 
@@ -258,6 +287,9 @@ Within an active RPG session, the user can invoke any of the following:
 6. **Time-skip overshoot** — narrating multi-week jumps when user expected one week.
 7. **PC dialogue intrusion** — narrating the PC's words in major scenes.
 8. **Transcript-only canon accumulation** — NPCs, contracts, hidden assets, comm protocols, threat states, and shell entities introduced in play but never filed. Catches up later as drift, contradiction, or forgotten obligations. **Write stub files as you go** (see "Canon file write-as-you-go" rule). Run periodic audits.
+9. **Novelty-default at canon-rich locations** — returning to an established site and inventing a new mystery hook ("faint signal at edge of sensors") instead of grounding the scene in existing canon. The narrative reflex is to invent; resist it. Read the project files first.
+10. **Silent disambiguation** — picking one canon entry when a player reference ("the derelict", "the contact") matches multiple. Pause and ask one line; do not commit to a guess.
+11. **Narrative-only finance** — narrating a tip/fee/purchase in-scene and forgetting to update the running ledger, then reporting financial state from working memory. The action must update the ledger in the same response.
 
 If any of these is about to happen, **pause and ask the user** rather than narrating through it. The cost of pausing is small; the cost of fabricating is large.
 
@@ -345,3 +377,4 @@ For now: invoke with `/rpg` for new chats, lean on the SessionStart hook for ong
 ## Change log
 
 - **v1.1 (Day 379 of *Verse* campaign):** Added "Canon file write-as-you-go" rule, "Periodic memory audit" rule, `/audit` sub-command, and failure mode #8 (transcript-only canon accumulation). Driven by audit of the *Verse* campaign that surfaced 8+ recurring NPCs, contracts, and assets living in transcript only after ~50 turns.
+- **v1.2 (Day 1650 of *Verse* campaign):** Added three new rules driven by live failures: (a) "Canon-check before returning to canon-rich locations / resist novelty-default" — narrator invented a mystery-signal hook at the campaign-defining Calder Drift instead of grounding the scene in existing canon. (b) "Disambiguate ambiguous player references" — narrator silently picked one of two canon "derelict" matches and committed to the wrong one. (c) "In-scene financial actions update the ledger immediately" — narrator tipped 664 cr in-scene then reported the pre-tip balance three lines later. Failure modes #9, #10, #11 added to the failure-modes list.
