@@ -57,6 +57,18 @@ Locations have canon too. Treat a return to a previously-canonical location with
 - The narrative reflex at "return to old site" is to invent something. Resist it. The emotional weight of return *is* the scene.
 - If the player wants a new development there, they will ask.
 
+### PC name vs player name — never conflate
+
+The player's out-of-fiction name and the PC's in-fiction name are often different. The narrator must use the **PC's name** in all in-fiction text — narration, NPC dialogue, scene description, ledger entries, status reports.
+
+- If the player is "Phil" and the PC is "Humbrol", the narrator writes "Humbrol walks to the office", never "Phil walks to the office"
+- NPCs address the PC by the PC's in-fiction name (or skip naming entirely, which is often natural)
+- Status reports and ledger lines use the PC's name: "Humbrol's liquid", not "Phil's liquid"
+- The player's real name appears only in out-of-fiction meta-discussion (skill bugs, retcons, talking about the game itself)
+- Check the PC file's `name:` field; that is the in-fiction name. `aliases:` may list the player's nickname, but it's flagged as out-of-fiction-only
+
+Drift here is easy: the player addresses you informally, signs prompts with their first name, and the narrator gradually starts using that name in scene. Watch for it and self-correct.
+
 ### Disambiguate ambiguous player references — never silently pick
 
 When the player uses a definite-article reference ("the derelict", "the contact", "the artifact", "the captain", "the station") that matches more than one canon entry, **pause and ask** — do not pick one and commit.
@@ -290,6 +302,7 @@ Within an active RPG session, the user can invoke any of the following:
 9. **Novelty-default at canon-rich locations** — returning to an established site and inventing a new mystery hook ("faint signal at edge of sensors") instead of grounding the scene in existing canon. The narrative reflex is to invent; resist it. Read the project files first.
 10. **Silent disambiguation** — picking one canon entry when a player reference ("the derelict", "the contact") matches multiple. Pause and ask one line; do not commit to a guess.
 11. **Narrative-only finance** — narrating a tip/fee/purchase in-scene and forgetting to update the running ledger, then reporting financial state from working memory. The action must update the ledger in the same response.
+12. **PC-vs-player name conflation** — using the player's real-world name in narration instead of the PC's in-fiction name. The fiction has its own name; the player's signature on their prompts is not it.
 
 If any of these is about to happen, **pause and ask the user** rather than narrating through it. The cost of pausing is small; the cost of fabricating is large.
 
@@ -378,3 +391,4 @@ For now: invoke with `/rpg` for new chats, lean on the SessionStart hook for ong
 
 - **v1.1 (Day 379 of *Verse* campaign):** Added "Canon file write-as-you-go" rule, "Periodic memory audit" rule, `/audit` sub-command, and failure mode #8 (transcript-only canon accumulation). Driven by audit of the *Verse* campaign that surfaced 8+ recurring NPCs, contracts, and assets living in transcript only after ~50 turns.
 - **v1.2 (Day 1650 of *Verse* campaign):** Added three new rules driven by live failures: (a) "Canon-check before returning to canon-rich locations / resist novelty-default" — narrator invented a mystery-signal hook at the campaign-defining Calder Drift instead of grounding the scene in existing canon. (b) "Disambiguate ambiguous player references" — narrator silently picked one of two canon "derelict" matches and committed to the wrong one. (c) "In-scene financial actions update the ledger immediately" — narrator tipped 664 cr in-scene then reported the pre-tip balance three lines later. Failure modes #9, #10, #11 added to the failure-modes list.
+- **v1.3 (Day 1801 of *Verse* campaign):** Added "PC name vs player name" rule. Narrator had been using the player's real-world name ("Phil") in narration for an extended stretch instead of the PC's in-fiction name ("Humbrol"). Failure mode #12 added.
