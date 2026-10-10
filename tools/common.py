@@ -17,29 +17,74 @@ except (AttributeError, OSError):
     pass
 
 
+# Pointer lines are hand-written, so the key comes in several spellings:
+# "memory_dir: X", "Memory directory: X (this folder)", "**Memory dir:** X".
+_POINTER_RE = re.compile(r"^\s*(?:-\s+)?memory[ _-]?dir(?:ectory)?\s*:\s*(.+?)\s*$", re.IGNORECASE)
+
+
+def _pointer_target(marker: Path) -> Optional[Path]:
+    """The existing directory an RPG_CAMPAIGN.md points at, or None.
+
+    The value may trail prose ("D:\\AI\\helluva (this folder). Index: ..."), so
+    the longest leading run of words that names an existing directory wins.
+    Relative paths resolve against the marker's own directory.
+    """
+    for line in marker.read_text(encoding="utf-8").splitlines():
+        m = _POINTER_RE.match(re.sub(r"[*`]", "", line))
+        if not m:
+            continue
+        words = m.group(1).split()
+        for n in range(len(words), 0, -1):
+            raw = " ".join(words[:n]).rstrip(".,;:)")
+            if not raw:
+                continue
+            path = Path(raw).expanduser()
+            if not path.is_absolute():
+                path = marker.parent / path
+            if path.is_dir():
+                return path
+    return None
+
+
+def find_campaign_dir(start: Path) -> Optional[Path]:
+    """The campaign memory directory for `start`, walking up to the drive root.
+
+    The nearest ancestor that names a campaign wins, so a campaign folder
+    nested under a directory holding a different campaign's pointer resolves
+    to itself, not to its parent's campaign. At each level:
+    1. RPG_CAMPAIGN.md pointing at a memory directory.
+    2. RPG_CAMPAIGN.md with no usable pointer, beside a MEMORY.md — the
+       campaign lives right here.
+    3. memory/MEMORY.md.
+    """
+    for ancestor in [start] + list(start.parents):
+        marker = ancestor / "RPG_CAMPAIGN.md"
+        if marker.exists():
+            target = _pointer_target(marker)
+            if target is not None:
+                return target
+            if (ancestor / "MEMORY.md").exists():
+                return ancestor
+        if (ancestor / "memory" / "MEMORY.md").exists():
+            return ancestor / "memory"
+    return None
+
+
 def find_memory_dir(start: Optional[Path] = None) -> Path:
     """Locate the campaign memory directory.
 
     Order of resolution:
-    1. RPG_CAMPAIGN.md in CWD pointing to a memory_dir.
-    2. ./memory if it has MEMORY.md.
-    3. ~/.claude/projects/*/memory/ (search; if multiple, latest mtime wins).
-    4. Fall back to creating ./memory in CWD.
+    1. find_campaign_dir — nearest campaign pointer or memory/ walking up from CWD.
+    2. ~/.claude/projects/*/memory/ (search; if multiple, latest mtime wins).
+    3. Fall back to creating ./memory in CWD.
     """
     start = start or Path.cwd()
 
-    campaign_marker = start / "RPG_CAMPAIGN.md"
-    if campaign_marker.exists():
-        for line in campaign_marker.read_text(encoding="utf-8").splitlines():
-            m = re.match(r"\s*memory_dir\s*:\s*(.+)\s*$", line)
-            if m:
-                path = Path(m.group(1).strip()).expanduser()
-                if path.exists():
-                    return path
+    campaign = find_campaign_dir(start)
+    if campaign is not None:
+        return campaign
 
     cwd_memory = start / "memory"
-    if (cwd_memory / "MEMORY.md").exists():
-        return cwd_memory
 
     home = Path.home() / ".claude" / "projects"
     if home.exists():
@@ -112,6 +157,44 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
             fm[key] = items
         else:
             fm[key] = val.strip('"').strip("'")
+
+    # Harness-written memory files nest type under a metadata: block
+    # (metadata:\n  type: feedback). Surface it as a top-level key.
+    if "type" not in fm or fm.get("type") == "":
+        m = re.search(r"^[ \t]+type[ \t]*:[ \t]*(\S+)[ \t]*$", fm_block, re.MULTILINE)
+        if m:
+            fm["type"] = m.group(1).strip('"').strip("'")
+
+    # Aliases get relocated under metadata: by the same linter. Left unhandled
+    # this silently empties by_alias, so every "the mate" / "the foreman"
+    # reference fails to resolve and gets reported as uncatalogued canon.
+    #
+    # The horizontal-whitespace classes below are load-bearing. With `\s*` the
+    # match runs across the newline whenever the linter leaves a trailing space
+    # after `aliases:` — `\s*` eats " \n    " and `(.*)$` then captures the
+    # FIRST list item as if it were an inline value. The block scan resumes
+    # after it, so alias #1 is silently dropped from every block-list file.
+    # That is invisible in the registry and shows up only as the first alias of
+    # each file being reported as uncatalogued canon, forever.
+    if not fm.get("aliases"):
+        m = re.search(r"^[ \t]+aliases[ \t]*:[ \t]*(.*)$", fm_block, re.MULTILINE)
+        if m:
+            inline = m.group(1).strip()
+            if inline.startswith("[") and inline.endswith("]"):
+                fm["aliases"] = [a.strip().strip('"').strip("'")
+                                 for a in inline[1:-1].split(",") if a.strip()]
+            else:
+                items = []
+                if inline and not inline.startswith("-"):
+                    items.append(inline.strip('"').strip("'"))
+                for line in fm_block[m.end():].splitlines():
+                    stripped = line.strip()
+                    if stripped.startswith("- "):
+                        items.append(stripped[2:].strip().strip('"').strip("'"))
+                    elif stripped:
+                        break
+                if items:
+                    fm["aliases"] = items
     return fm, body
 
 

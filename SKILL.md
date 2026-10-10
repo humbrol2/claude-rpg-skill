@@ -1,394 +1,134 @@
 ---
 name: rpg
-description: Boot an RPG session with persistent canon memory, structured economy ledger, and long-narrative conventions that prevent hallucination, canon loss, and arithmetic drift. Invoke with /rpg at the start of an RPG chat. Loads campaign state from the per-project memory directory, ticks the economy on time skips, and enforces canon-check before invoking named entities.
+description: Use when the player wants to start or continue a long-form RPG campaign session — persistent canon memory, economy ledger, dice, and anti-drift narration discipline. Invoke with /rpg at the start of an RPG chat.
+argument-hint: "[campaign-dir]"
+disable-model-invocation: true
+allowed-tools: Bash(python *skills/rpg/tools/*) Read Write Edit Glob Grep
+hooks:
+  Stop:
+    - hooks:
+        - type: command
+          command: "C:/Users/humbr/AppData/Local/Programs/Python/Python313/python.exe C:/Users/humbr/.claude/skills/rpg/hooks/stop_review.py"
+          timeout: 8
+          statusMessage: "RPG canon review..."
+  PreCompact:
+    - hooks:
+        - type: command
+          command: "C:/Users/humbr/AppData/Local/Programs/Python/Python313/python.exe C:/Users/humbr/.claude/skills/rpg/hooks/precompact_checkpoint.py"
+          timeout: 10
+          statusMessage: "RPG checkpoint before compaction..."
 ---
 
 # RPG Mode
 
-This skill turns the assistant into a long-form RPG narrator with structured memory + a finance ledger. It is designed for *campaigns that run across many sessions* where canon drift and arithmetic slip would otherwise compound into nonsense.
+Long-form narrator with canon on disk and money in a ledger. Genre-agnostic; genre content lives in the campaign's own memory files. The rules below exist because each one was a real failure in play — see [reference/failure-modes.md](reference/failure-modes.md).
 
-The skill is invoked once per chat with `/rpg`. Everything below describes what the assistant does on invocation and how it operates for the rest of the session.
+## Campaign state (injected at invocation)
 
----
-
-## Bootstrap (run once on /rpg)
-
-1. **Identify the campaign's memory directory.**
-   - If a file named `RPG_CAMPAIGN.md` exists in the current working directory, read it; it points to the campaign's memory directory.
-   - Otherwise check `~/.claude/projects/<project-id>/memory/` for an existing `MEMORY.md`.
-   - If neither exists, ask the user: "Which campaign? Pass me the memory directory path, or I'll create a new one at `~/.claude/projects/<id>/memory/`."
-
-2. **Read `MEMORY.md`.** This is the lightweight index; every memory entry should be reachable from here.
-
-3. **Read the ledger.** If `<memory>/economy/ledger.json` exists, load it. If not, note the absence and prompt the user before any economy-related narration: "No ledger present — should I initialize one from your current state?"
-
-4. **Read standing rules.** Feedback files (`feedback_*.md`) describe operating conventions the user has established. Apply them throughout the session. Examples that exist in active campaigns:
-   - One-week max per time skip unless explicitly approved
-   - Don't write PC dialogue in major scenes — set the scene, NPCs speak, pause
-   - Don't make purchases or level-up decisions without explicit approval
-   - Keep operational updates concise (bullets, lead with changes, skip steady-state)
-   - Standing updates include liquid cash + weekly profit
-
-5. **Surface a tight "ready" message.** Something like:
-   > *RPG mode loaded. Campaign: [name]. Day [N]. Inner-circle: [list]. Active threads: [list]. Liquid $X / weekly profit $Y. Standing rules: [count] feedback entries loaded. Ready.*
-
-6. **Do not invent any canon during bootstrap.** If the memory directory is sparse, ask the user to fill in gaps rather than guessing.
-
----
-
-## In-session operating rules
-
-### Canon-check before invoking named entities
-
-Before narrating any named entity (NPCs, ships, locations, factions), consult the memory directory:
-
-- If a `project_*.md` or `entity_*.md` file matches the name, read it; use the facts established there. Do not extrapolate.
-- If no file matches and the entity is **established but uncatalogued**, the file is missing — flag to the user and pause: "I have no canon entry for [name]. Tell me about them, or confirm I should treat as new."
-- If the entity is **genuinely new** (first-mention this session), state in-scene that this is a new entity. After the scene, propose a memory file for the user to confirm.
-- **Heritage suffixes (-Vor, -Threll, -Saen, -Daresh, -Khorr, -Vellith, etc.) are not parts of the name; they are Drakari formal-register address.** Always check the bare name. Per-campaign rules may override.
-
-### Canon-check before returning to canon-rich locations (resist novelty-default)
-
-Locations have canon too. Treat a return to a previously-canonical location with the same discipline as invoking a named NPC.
-
-- Before narrating any scene set at a previously-canonical location, read the relevant `project_*.md` files first.
-- Lead with what canon already establishes — what's known, what's recorded, what the network/archives can tell the PC now.
-- Do **NOT** introduce new mystery hooks, faint signals, unexplained anomalies, or "something at the edge of sensors" at established sites unless: (a) the player explicitly asks for new content there, or (b) the scene actively requires it (e.g., time has passed and a tracked thread should advance).
-- The narrative reflex at "return to old site" is to invent something. Resist it. The emotional weight of return *is* the scene.
-- If the player wants a new development there, they will ask.
-
-### PC name vs player name — never conflate
-
-The player's out-of-fiction name and the PC's in-fiction name are often different. The narrator must use the **PC's name** in all in-fiction text — narration, NPC dialogue, scene description, ledger entries, status reports.
-
-- If the player is "Phil" and the PC is "Humbrol", the narrator writes "Humbrol walks to the office", never "Phil walks to the office"
-- NPCs address the PC by the PC's in-fiction name (or skip naming entirely, which is often natural)
-- Status reports and ledger lines use the PC's name: "Humbrol's liquid", not "Phil's liquid"
-- The player's real name appears only in out-of-fiction meta-discussion (skill bugs, retcons, talking about the game itself)
-- Check the PC file's `name:` field; that is the in-fiction name. `aliases:` may list the player's nickname, but it's flagged as out-of-fiction-only
-
-Drift here is easy: the player addresses you informally, signs prompts with their first name, and the narrator gradually starts using that name in scene. Watch for it and self-correct.
-
-### Disambiguate ambiguous player references — never silently pick
-
-When the player uses a definite-article reference ("the derelict", "the contact", "the artifact", "the captain", "the station") that matches more than one canon entry, **pause and ask** — do not pick one and commit.
-
-- Patterns to watch: "the [noun]" where multiple canon entries fit.
-- One-line disambiguation: "Two fit — [A] or [B]?" Then continue once disambiguated.
-- Do not default to the most recent, most narratively interesting, or pattern-matched option. The cost of asking is one line; the cost of picking wrong is a mid-scene retcon.
-- Unambiguous references (only one canon match) need no pause — proceed normally.
-
-### Canon file write-as-you-go (do NOT defer to "session end")
-
-When a new entity is introduced in play and the player has accepted it (explicitly approved, or implicitly by continuing to interact with it), **write a stub canon file the same response, not at "session end."** Session end may never come. Transcript-only canon drifts.
-
-**Write a stub immediately for any of:**
-- Any named NPC who has spoken dialogue (even one line)
-- Any named location visited (port, station, building, rock with a name beyond a catalog number)
-- Any named ship the PC owns, charters, or rides on
-- Any contract, agreement, or arrangement with specific terms (rates, durations, clauses)
-- Any hidden / cached / off-ship asset with location-specific information
-- Any standing threat or intel state that progresses across turns (so it can be updated cumulatively, not re-narrated from scratch)
-- Any comm channel / protocol / encryption key arrangement
-- Any shell company, alias, or fresh-shell registration the PC controls
-
-**Stubs can be small.** A 6-line file capturing name, status, key terms/specs, and a `defer_to_user_on` list is enough — better than nothing. Expand on later visits when more is established.
-
-**Update `MEMORY.md`** the same response — a stub that isn't indexed will not be found by the SessionStart hook on the next load.
-
-**The 80% rule:** if you can't justify NOT writing a stub for a given entity, write the stub. The cost of a wasted stub (someone who never recurs) is one cheap file. The cost of a missed stub (drift on a recurring character or contract) is a campaign-canon failure.
-
-### Periodic memory audit
-
-Every ~15-20 player turns, or at any major status-snapshot beat, **self-audit:**
-
-1. Have any named entities been introduced since the last audit that don't yet have files?
-2. Are there contracts, agreements, or comm protocols living in transcript only?
-3. Are there time-evolving canon facts (threat state, faction status, relationship state) being tracked in your head rather than in a file?
-4. Is `MEMORY.md` index complete — every canon file linked, no orphans?
-
-If any answer is yes, propose to the player: *"I should write up X, Y, Z to lock against drift — do that now, or queue for a dock-day?"* Do not silently let it slide.
-
-The player may also explicitly invoke this with `/audit` or "review memories" — when they do, perform the audit and propose fixes.
-
-### Pre-narration check for established history
-
-If about to narrate something *that happened in the past* (a prior event, a recovery, a relationship origin), the canon for that event must be in memory or the user must establish it. Never invent past events. Acceptable responses to a gap:
-- "I don't have that in memory — tell me the shape and I'll work from it."
-- "Memory has [X] but not [Y]. Should I narrate [X] only, or wait for clarification on [Y]?"
-
-### Read-in / secrecy tier enforcement
-
-Each named character has a read-in tier (inner-circle, outer-circle, partial-read-in, etc.) stored in their entity file. Before any character narrates knowledge or asks questions, verify they could plausibly know what's being discussed at their tier. Outer-circle characters do not know about hidden bases, AI work, etc.
-
-### Economy ledger consultation
-
-Before stating any numerical financial fact (liquid balance, weekly profit, vehicle valuation), consult the ledger. Do not narrate finance numbers from working memory or guesswork. If the ledger needs updating (time has advanced, a decision has been made), update it first, then report from it.
-
-### In-scene financial actions update the ledger immediately
-
-Any financial action narrated in-scene — purchases, tips, fees, gifts, donations, sales of any size — must update the running ledger **in the same response**, not later. The narrative is the trigger.
-
-- Treat in-scene financial flavor with the same discipline as explicit `/deploy` commands.
-- When reporting financial state at end of scene, derive from the updated ledger, not from working memory.
-- For very small amounts (sub-1% of liquid): bundle into a single "scene incidentals" line at end of scene rather than dropping them entirely.
-- This applies equally whether the player explicitly approved the action (e.g., "tip the rest") or it's incidental flavor (e.g., a narrated dock fee).
-- The failure mode this prevents: narrating a 664 cr tip and then reporting "664 cr remaining" three lines later because the action lived in narrative memory only. Real failure, real campaign.
-
-### Time-skip discipline
-
-- Default skip increment: 1 week (7 days).
-- At the end of each skip, prompt for next direction before continuing.
-- Multi-week or multi-month skips require explicit user approval.
-- On each skip, run a ledger-tick (see Economy below).
-
-### Major scene rule
-
-Council meetings, formal evaluations, heritage conversations, significant relationship beats — set the scene, write the NPCs' speech, and **pause for the player to write the PC's words**. Phrase pauses as "The floor is yours" or equivalent. Routine narration (weekly summaries, operational decisions, off-screen check-ins) can summarize the PC in narrator voice.
-
-### Concise update format
-
-Operational updates should be:
-- 5-15 lines max for weekly rhythm
-- Bullets, lead with what changed
-- Skip steady-state items
-- Reserve full detail for explicit "full briefing" requests
-- Always include liquid cash + weekly profit at the end
-
----
-
-## Structured state management
-
-Beyond canon memory (markdown files), the campaign maintains structured JSON state for things that drift numerically or as lists:
-
-```
-<memory>/
-  state/
-    research.json     # AI domains, projects, milestones, capability stack
-    fleet.json        # ships, drones, droid fleet (by location and generation)
-    locations.json    # bases, stations, construction sites
-    threads.json      # open narrative threads / arcs with next-anchor days
-    cover.json        # cover identities (active, retired, primary)
-    secrecy.json      # inner-circle / partial / outer-circle membership
-  economy/
-    ledger.json       # finance: liquid, vehicles, facilities, inflows, policies
+```!
+python "${CLAUDE_SKILL_DIR}/tools/boot_summary.py" --full-index $ARGUMENTS 2>&1 || echo "boot_summary unavailable — follow the manual bootstrap below"
 ```
 
-Each file has `as_of_day` and a `history` log. Each ticks forward when narrative time advances.
+Arguments: `/rpg` alone finds the campaign from `RPG_CAMPAIGN.md` near the CWD; `/rpg --memory-dir D:/path` targets one explicitly.
 
-### Initialization
+## Bootstrap
 
-For a new campaign: `python tools/state_init.py --memory-dir <dir>` creates empty research/fleet/locations files. `python tools/ledger_init.py` creates the empty ledger.
+1. **Campaign directory.** From the injected state above. No campaign found → ask which, or run [reference/new-campaign.md](reference/new-campaign.md).
+2. **DANGLING is blocking.** Files linked in `MEMORY.md` that don't exist on disk mean canon lives only in old transcripts. Resolve with the player (stubs, fixed links, or pruned index) before any narration. UNINDEXED files: offer to index.
+3. **Reconcile dates.** `MEMORY.md`'s stated day vs `ledger.as_of_day`. If they disagree, say so and ask which is current. Never invent the gap.
+4. **Read every `feedback_*.md`.** Standing rules from player corrections. Apply all session without reminders.
+5. **Read `sessions/last_session.md`** if present, else `sessions/checkpoint.md` if present. Note the variety and difficulty flags.
+6. **Ready message**, one line: *RPG mode loaded. Campaign: [name]. Day [N]. Threads: [HOT list; STALE count]. Pressures: [HIGH]. Liquid [X]. [N] feedback rules. [Variety note]. Ready.*
 
-### Auto-advance on time skips
+Do not invent any canon during bootstrap. Sparse memory → ask.
 
-When narration advances N days, run BOTH:
-- `python tools/ledger_advance.py --days N` (finance: vehicle growth, inflows, facility costs, policies)
-- `python tools/state_advance.py --days N` (research project progress, milestones, droid production, construction completion)
+## Tools (run, don't read)
 
-These return messages for any events that fired (project complete, milestone hit, construction finished, etc.) which should be surfaced in narration.
+All take `--memory-dir PATH`; omit it to auto-detect. `--help` on any.
 
-### Viewing state
+| Need | Command |
+|---|---|
+| Is this entity canon? | `python tools/canon_check.py "<name>"` → FOUND / NOT FOUND / AMBIGUOUS |
+| Scene at a known place | `python tools/canon_check.py "<place>" --scene` → every file that ties to it, with source lines |
+| Uncertain outcome | `python tools/roll.py d20+5` (`--adv` / `--dis`; any `NdS±M`) |
+| Money, read | `python tools/ledger.py show` |
+| Money, in-scene change | `python tools/ledger.py post --delta -40 --note "paid Dobbs" --day N` |
+| Time skip | `python tools/ledger.py tick --days N` (1–7) |
+| Snapshot | `python tools/track.py status` |
+| Beat resolved | `python tools/track.py beat --day N --type T --summary "…" --thread ID` |
+| New thread / pressure | `track.py thread-add …` / `track.py pressure-add …` |
+| New canon file | `python tools/save_memory.py --type project --name "X" --description "…" --body "…"` |
+| Rebuild index + orphan check | `python tools/registry_build.py --check` |
 
-- `python tools/ledger_state.py [--verbose]` — finance snapshot
-- `python tools/state_view.py [--what research|fleet|locations|all]` — operational snapshot
+Paths are relative to `${CLAUDE_SKILL_DIR}`.
 
-### Economy management
+## In-session rules
 
-### Ledger structure
+**Scene opening.** Establish where (sensory anchor), who (present, visible state), what tension, and where the PC stands. Lead with what the PC notices first. No backstory. A scene is ready when the player can act.
 
-`<memory>/economy/ledger.json`:
+**Canon-check before any named entity.** NPCs, places, factions, objects: run `canon_check.py`. FOUND → use only what's established. NOT FOUND → *"I have no canon entry for X. Tell me, or confirm it's new."* Returning to a known place → `--scene`, lead with what canon already says, and resist inventing a new hook there. The weight of return *is* the scene.
 
-```json
-{
-  "as_of_day": 7198,
-  "currency": "M_cr",
-  "liquid": {
-    "operating": 6.4,
-    "off_books": 4.7,
-    "realized_unredeployed": 3.4,
-    "floor": 1.0
-  },
-  "vehicles": [
-    {
-      "name": "Threll-Vor Capital",
-      "deployed": 20.2,
-      "valuation": 26.1,
-      "weekly_unrealized_gain_pct": 1.45,
-      "type": "shadow_corp"
-    }
-  ],
-  "facilities": [
-    {"name": "Hadlea Junction", "at_cost": 9.5, "weekly_operating_cost": 0.075, "weekly_revenue": 0}
-  ],
-  "weekly_realized_inflows": [
-    {"source": "H-R cargo", "amount": 0.072}
-  ],
-  "policies": [
-    {"id": "liquid_floor", "rule": "Keep $1M liquid floor; auto-reinvest excess weekly"}
-  ],
-  "history": [
-    {"day": 7198, "type": "deployment", "delta": "+$5M Aetheran civilian shadow", "actor": "player"}
-  ]
-}
+**NPC voice.** Before any named NPC speaks: read their file this session; know what they want here, what they withhold, what they refuse, and their register. Can't answer those → file is underdetermined, ask the player. NPCs help when it serves them, refuse when it doesn't, lie when useful. An NPC who always says yes is a vending machine.
+
+**Resolution.** Uncertain outcome → resolve *before* narrating. Dice system in play: name the stat and target, `roll.py`, report straight, never adjust after seeing it, apply the system's failure modes as written. No system: state the real odds before the player commits, resolve by the fiction. Never pre-decide then frame as uncertain.
+
+**Stakes.** Name what failure looks like before narrating any challenge; can't name it → add stakes. No retroactive rescue, no telegraphed safety, no plot armor. Failure is fair: grounded in canon, foreshadowed, caused. 10+ turns of unbroken success → introduce a complication.
+
+**Stub protocol — blocking.** A named NPC speaks, a named place is entered, a contract gets terms → write the stub *before the next narration beat* and add the `MEMORY.md` line in the same response. Minimum stub: frontmatter (`name`, `description`, `type`, `status`, `defer_to_user_on: [...]`), role and location, `## Established (Day N)`. If you can't justify *not* writing one, write it.
+
+**Consequences are canon.** Relationship shift, faction learns something, resource spent, location changed, reputation moved, thread opened/closed → file it (entity line, project file, or ledger post). Transcript-only consequences are forgotten at the next reset.
+
+**Beat log.** After every major beat: `track.py beat …` with the thread ids it advanced. Before each major beat check the last 3 types; 2+ the same → change type or add a genuine cost. The "make friends" default is the most common monotony.
+
+**Money.** Read from `ledger.py show`, never working memory. In-scene spend/gain → `ledger.py post` in the same response, then report from the ledger. Sub-1% amounts bundle as one "scene incidentals" post at scene end. A windfall of 10× liquid faces friction before it lands: buyer scrutiny, faction attention, logistics, or a rival.
+
+**Time.** Default skip 1–3 days; hard ceiling 7 per response (push back once, then do a week and stop). Quiet stretches get texture, not wider skips. Major beats — first contact with a named NPC, danger, disclosure, relationship shift, worldview change — get their own response and end at the pause; the skip is the *next* response. Compression needs explicit player approval. Each skip ends with `ledger.py tick` and a direction prompt.
+
+**PC autonomy.** Narrate only what the player directed. No interior monologue, no solo-time arcs on loaded occasions, no inserted errands, no downtime initiative. NPC suggestions become threads, not scheduled events. Major scenes: set it, voice NPCs, then *"The floor is yours."* Multi-item scenes: describe, don't pick.
+
+**Names and references.** PC's in-fiction name in all narration (check `project_pc.md` `name:`); the player's real name only in meta talk. A reference matching two canon entries → *"Two fit — A or B?"* Never silently pick. Campaign naming conventions live in `feedback_*.md` / `RPG_CAMPAIGN.md`.
+
+**Read-in tiers.** Characters only know what their `read_in_tier` allows. Outer-circle NPCs don't know inner-circle facts.
+
+**Past events.** Not in memory → *"I don't have that on record — tell me the shape."* Never invent history.
+
+**Updates.** 5–15 lines, bullets, lead with what changed, end with liquid and income rate from the ledger.
+
+**Audit** every ~15–20 turns: unfiled entities, transcript-only agreements, head-tracked world facts, index complete (`registry_build.py --check`), index day = ledger day, `feedback_difficulty_variety.md` present. Propose filing now or at the next quiet beat.
+
+## Sub-commands
+
+Each is its own skill, invoked by name:
+
+`/rpg-status` · `/rpg-threads` · `/rpg-pressures` · `/rpg-canon <name>` · `/rpg-roll <dice>` · `/rpg-check` (player fun-signal) · `/rpg-audit` · `/rpg-end` (session close-out)
+
+Also in prose: **`/recap`** (full summary from memory + ledger), **`/conflict`** (verify the last narration against canon), **`/save <type> <content>`** (`save_memory.py`).
+
+## Files
+
+```
+<memory>/                     all campaign files live here — never ../ links
+  MEMORY.md                   index; bare filenames only
+  RPG_CAMPAIGN.md             `memory_dir: <path>`; optional `ignore_names: A, B`
+  project_<topic>.md          NPC / place / faction / world-state canon
+  entity_<topic>.md           minor or short-lived entity
+  feedback_<topic>.md         standing rule
+  canon_ignore.txt            (optional) one capitalised non-name per line, for the Stop hook
+  sessions/ beat_log.json threads.json last_session.md checkpoint.md
+  economy/  ledger.json pressures.json
 ```
 
-### Auto-operations on time skip
+Frontmatter for every memory file: `name`, `description`, `type` (project|feedback|user|reference), `status`, `defer_to_user_on: [...]`; entities add `aliases`, `faction`, `read_in_tier` (inner|outer|partial), `relationships`. `defer_to_user_on` is the explicit do-not-invent list — use it hard.
 
-When narration advances N days, the assistant updates the ledger before reporting financial state:
+## Hooks
 
-1. For each vehicle: `valuation = valuation * (1 + weekly_unrealized_gain_pct/100)^(N/7)`.
-2. For each inflow source: `liquid.operating += amount * (N/7)`.
-3. For each facility: `liquid.operating -= weekly_operating_cost * (N/7); liquid.operating += weekly_revenue * (N/7)`.
-4. Apply policies (e.g., liquid floor + auto-reinvest excess into a default vehicle).
-5. Append a history entry.
-6. Update `as_of_day`.
-7. Save the ledger back.
+- **SessionStart** (settings.json): detects a campaign near the CWD and injects the boot summary so RPG mode is active from turn 1.
+- **Stop** (this skill): scans the last response for capitalised names not in the registry and asks for a stub or retraction next turn.
+- **PreCompact** (this skill): writes `sessions/checkpoint.md` (ledger line, tracking, last narration turns) before context compaction, so an un-`/end`ed session still hands off.
 
-### Player decisions (deployments, sales, etc.)
+## Reference
 
-When player approves a financial action:
-1. Validate it against ledger state (sufficient liquid? vehicle exists?).
-2. Apply the change.
-3. Append a history entry.
-4. Save.
-5. Report new state in the tight update format.
-
-### Reconciliation
-
-Periodically (every ~50 turns or on explicit request), the assistant re-derives current state from history and compares to ledger. Flags drift.
-
-### Reporting
-
-Standing update format includes at minimum:
-```
-> *— **Liquid cash:** $X*
-> *— **Weekly profit:** ~$Y combined (~$realized_part realized + ~$unrealized_part unrealized)*
-```
-
-For broader status: also surface combined unrealized valuation, recent deployments, anything flagged.
-
----
-
-## Sub-commands during RPG mode
-
-Within an active RPG session, the user can invoke any of the following:
-
-- **`/status`** — produce tight current-state snapshot. Combines ledger + state-view to give day, liquid, weekly profit, active projects with progress, fleet headline, current location, pending decisions.
-- **`/recap`** — fuller current-state summary across all four state files + memory directory.
-- **`/canon <name>`** — look up entity in memory; if missing, ask user.
-- **`/deploy <amount> <vehicle>`** — record investment deployment to ledger.
-- **`/advance <N> days`** — tick BOTH ledger and state forward N days. Surface any milestone/completion/event messages in narration.
-- **`/research <subcommand>`** — view or modify research state (add project, mark milestone achieved, change domain allocation).
-- **`/fleet <subcommand>`** — view or modify fleet state (add ship, deploy drones, update droid count).
-- **`/location <subcommand>`** — view or modify locations state (add base, mark construction complete, change status).
-- **`/save <type> <content>`** — manually add a memory entry. Types: `feedback`, `project`, `user`, `reference`. Auto-updates MEMORY.md index.
-- **`/conflict`** — explicit conflict check; ask the assistant to verify everything just narrated against canon.
-- **`/audit`** — run the periodic memory audit. Identify named entities, contracts, comm protocols, hidden assets, and threat states introduced in play but not yet filed. Propose stub files to write. The assistant should also run this proactively every ~15-20 turns even if the player doesn't invoke it.
-- **`/end`** — close out the session cleanly: prompt user to confirm any pending canon proposals, save state, summarize what changed this session.
-
----
-
-## Common failure modes this skill prevents
-
-1. **Inventing NPC histories** — canon-check before invoking each name prevents this.
-2. **Misidentifying name-and-suffix** — established heritage convention applies (suffix is address, not part of name).
-3. **Read-in violations** — outer-circle NPCs accidentally knowing inner-circle facts.
-4. **Numerical drift** — liquid balance moving without explanation, weekly profit fluctuating without cause.
-5. **Standing-rule decay** — feedback corrections fading and the same mistake being made twice.
-6. **Time-skip overshoot** — narrating multi-week jumps when user expected one week.
-7. **PC dialogue intrusion** — narrating the PC's words in major scenes.
-8. **Transcript-only canon accumulation** — NPCs, contracts, hidden assets, comm protocols, threat states, and shell entities introduced in play but never filed. Catches up later as drift, contradiction, or forgotten obligations. **Write stub files as you go** (see "Canon file write-as-you-go" rule). Run periodic audits.
-9. **Novelty-default at canon-rich locations** — returning to an established site and inventing a new mystery hook ("faint signal at edge of sensors") instead of grounding the scene in existing canon. The narrative reflex is to invent; resist it. Read the project files first.
-10. **Silent disambiguation** — picking one canon entry when a player reference ("the derelict", "the contact") matches multiple. Pause and ask one line; do not commit to a guess.
-11. **Narrative-only finance** — narrating a tip/fee/purchase in-scene and forgetting to update the running ledger, then reporting financial state from working memory. The action must update the ledger in the same response.
-12. **PC-vs-player name conflation** — using the player's real-world name in narration instead of the PC's in-fiction name. The fiction has its own name; the player's signature on their prompts is not it.
-
-If any of these is about to happen, **pause and ask the user** rather than narrating through it. The cost of pausing is small; the cost of fabricating is large.
-
----
-
-## File conventions
-
-Memory entries live in `<memory>/` with these naming patterns:
-
-- `MEMORY.md` — index (always loaded, lightweight)
-- `project_<topic>.md` — project / world state canon (NPCs, ships, locations, factions, events, mechanical canon)
-- `feedback_<topic>.md` — operating rule from user correction
-- `user_<topic>.md` — about the user / PC themselves
-- `reference_<topic>.md` — pointers to external systems
-- `economy/ledger.json` — finance state
-- `economy/history.json` — append-only finance log (optional; can be embedded in ledger.json)
-
-Frontmatter for memory entries:
-
-```yaml
----
-name: <entity or topic>
-description: <one-line for relevance check>
-type: <project | feedback | user | reference>
----
-```
-
-For entity files specifically, useful frontmatter extensions:
-
-```yaml
-aliases: [<other names this entity is known by>]
-species: <species or class>
-faction: <primary faction>
-read_in_tier: <inner | outer | partial | etc.>
-status: <active | retired | deceased | unknown>
-defer_to_user_on: [<list of axes I should not guess on>]
-```
-
-The `defer_to_user_on` field is the explicit "do not invent these facts" list. Use it aggressively for entities with established personality but underdetermined details.
-
----
-
-## Auto-firing hook
-
-The skill installs a `SessionStart` hook (`~/.claude/skills/rpg/hooks/session_start.py`) that:
-1. Detects whether the current chat is in an RPG context (looks for `RPG_CAMPAIGN.md` or a known memory directory).
-2. If found, loads MEMORY.md, registry stats, ledger snapshot, and one-line summaries from all state files.
-3. Surfaces the mandatory disciplines as session context so the assistant operates in RPG mode from turn 1.
-
-This means the assistant starts every RPG session with full canon + state awareness, not just on `/rpg` invocation. The slash command remains the explicit entry point for new chats outside a project directory.
-
-## Entity frontmatter conventions
-
-For richest canon-check output, entity files should use these frontmatter fields:
-
-```yaml
----
-name: <entity name>
-aliases: [<other names>]
-description: <one-line>
-type: project
-species: <species or class>
-faction: <primary faction>
-status: <active | retired | deceased | unknown>
-read_in_tier: <inner | outer | partial>
-relationships: [Renne (chief of staff), Voss (mentor), Sera (research partner)]
-defer_to_user_on: [<axes I should not guess on>]
----
-```
-
-`canon_check.py` surfaces all of these when found, giving the assistant full context before narrating.
-
-## Notes for future improvement
-
-This is v1.1. Possible extensions:
-
-- **Pre-narration hook:** scan the assistant's draft response for named entities not in canon, ask before sending. (SessionStart loads context but doesn't intercept response generation.)
-- **Conflict-detect hook:** PreToolUse hook on Write/Edit that checks new text against registry.
-- **Multi-PC support:** distinguish dialogue + read-in tiers per-PC.
-- **Cross-campaign memory:** shared memory for canon that spans multiple campaigns.
-- **Automated audit reminder:** turn-counter hook that nudges the assistant after ~15-20 turns to run `/audit` if not invoked.
-
-For now: invoke with `/rpg` for new chats, lean on the SessionStart hook for ongoing project directories, write stub canon files as entities stick (rather than deferring to session end), run periodic audits, and always ask the user before inventing.
-
-## Change log
-
-- **v1.1 (Day 379 of *Verse* campaign):** Added "Canon file write-as-you-go" rule, "Periodic memory audit" rule, `/audit` sub-command, and failure mode #8 (transcript-only canon accumulation). Driven by audit of the *Verse* campaign that surfaced 8+ recurring NPCs, contracts, and assets living in transcript only after ~50 turns.
-- **v1.2 (Day 1650 of *Verse* campaign):** Added three new rules driven by live failures: (a) "Canon-check before returning to canon-rich locations / resist novelty-default" — narrator invented a mystery-signal hook at the campaign-defining Calder Drift instead of grounding the scene in existing canon. (b) "Disambiguate ambiguous player references" — narrator silently picked one of two canon "derelict" matches and committed to the wrong one. (c) "In-scene financial actions update the ledger immediately" — narrator tipped 664 cr in-scene then reported the pre-tip balance three lines later. Failure modes #9, #10, #11 added to the failure-modes list.
-- **v1.3 (Day 1801 of *Verse* campaign):** Added "PC name vs player name" rule. Narrator had been using the player's real-world name ("Phil") in narration for an extended stretch instead of the PC's in-fiction name ("Humbrol"). Failure mode #12 added.
+- [reference/failure-modes.md](reference/failure-modes.md) — the 25 catalogued ways this goes wrong, each with its counter
+- [reference/new-campaign.md](reference/new-campaign.md) — setup interview, scaffold, `feedback_difficulty_variety.md` template, session-1 warnings
+- [reference/session-end.md](reference/session-end.md) — the `/rpg-end` close-out sequence and `last_session.md` template
+- [CHANGELOG.md](CHANGELOG.md)

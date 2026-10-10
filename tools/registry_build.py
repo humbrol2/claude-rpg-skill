@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -15,7 +16,11 @@ from common import find_memory_dir, list_memory_files, parse_frontmatter
 
 
 def normalize_name(name: str) -> str:
-    return name.strip().lower()
+    # Separator forms vary: memory linters slugify frontmatter `name:` fields to
+    # kebab-case ("berth-authority") while narration uses spaces ("Berth Authority").
+    # Fold hyphens, underscores, and runs of whitespace to a single space so a name
+    # resolves in either form.
+    return re.sub(r"[-_\s]+", " ", name.strip().lower())
 
 
 def extract_roster_entities(path: Path, body: str) -> list[dict]:
@@ -41,8 +46,13 @@ def build_registry(memory_dir: Path) -> dict:
     by_type = {}
 
     for path in list_memory_files(memory_dir):
-        text = path.read_text(encoding="utf-8")
-        fm, body = parse_frontmatter(text)
+        try:
+            text = path.read_text(encoding="utf-8")
+            fm, body = parse_frontmatter(text)
+        except Exception as exc:
+            # A single unreadable / malformed file must not sink the whole index.
+            print(f"  warning: skipped {path.name} ({exc})", file=sys.stderr)
+            continue
         if not fm:
             continue
 
@@ -104,9 +114,78 @@ def build_registry(memory_dir: Path) -> dict:
     }
 
 
+def referenced_canon_files(memory_dir: Path) -> set[str]:
+    """Collect every project_*.md / entity_*.md filename referenced in MEMORY.md.
+
+    Catches markdown link targets ``](project_x.md)`` and bare filename mentions.
+    Returns an empty set if MEMORY.md is absent.
+    """
+    import re
+    index = memory_dir / "MEMORY.md"
+    if not index.exists():
+        return set()
+    text = index.read_text(encoding="utf-8")
+    # Any project_/entity_ .md filename token, whether inside a [link](...) or bare.
+    pattern = re.compile(r"((?:project|entity)_[A-Za-z0-9_\-]+\.md)")
+    return {m.group(1) for m in pattern.finditer(text)}
+
+
+def orphan_report(memory_dir: Path) -> dict:
+    """Diff MEMORY.md against the canon files on disk.
+
+    - dangling:  referenced in MEMORY.md but the file does not exist (e.g. canon
+                 that only ever lived in transcript). The critical failure.
+    - unindexed: a project_/entity_ file exists on disk but MEMORY.md never links it
+                 (canon that won't be surfaced on load).
+    """
+    referenced = referenced_canon_files(memory_dir)
+    on_disk = {
+        p.name
+        for p in list_memory_files(memory_dir)
+        if p.name.startswith(("project_", "entity_"))
+    }
+    dangling = sorted(referenced - on_disk)
+    unindexed = sorted(on_disk - referenced)
+    return {
+        "has_index": (memory_dir / "MEMORY.md").exists(),
+        "referenced": len(referenced),
+        "on_disk": len(on_disk),
+        "dangling": dangling,
+        "unindexed": unindexed,
+    }
+
+
+def print_orphan_report(memory_dir: Path) -> None:
+    """Print the MEMORY.md-vs-disk orphan diff in a human-readable form."""
+    rep = orphan_report(memory_dir)
+    print()
+    if not rep["has_index"]:
+        print("ORPHAN CHECK: no MEMORY.md found — cannot diff.")
+        return
+    print(
+        f"ORPHAN CHECK: {rep['referenced']} canon files referenced in MEMORY.md, "
+        f"{rep['on_disk']} on disk."
+    )
+    if rep["dangling"]:
+        print(f"  DANGLING ({len(rep['dangling'])}) — linked in MEMORY.md, file MISSING:")
+        for name in rep["dangling"]:
+            print(f"    - {name}")
+    if rep["unindexed"]:
+        print(f"  UNINDEXED ({len(rep['unindexed'])}) — file on disk, not linked in MEMORY.md:")
+        for name in rep["unindexed"]:
+            print(f"    - {name}")
+    if not rep["dangling"] and not rep["unindexed"]:
+        print("  CLEAN — index and disk agree.")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--memory-dir", type=Path, default=None)
+    ap.add_argument(
+        "--check",
+        action="store_true",
+        help="After building, diff MEMORY.md against disk and report orphans.",
+    )
     args = ap.parse_args()
 
     memory_dir = args.memory_dir or find_memory_dir()
@@ -120,6 +199,14 @@ def main() -> int:
 
     print(f"Built registry: {registry['count']} entities at {out}")
     print(f"  Types: {dict((t, len(v)) for t, v in registry['by_type'].items())}")
+
+    if args.check:
+        # The orphan check is advisory. A failure here must not undo the registry
+        # that was just written successfully, so swallow any error and report it.
+        try:
+            print_orphan_report(memory_dir)
+        except Exception as exc:
+            print(f"\nORPHAN CHECK: skipped ({exc}) — registry was still built.", file=sys.stderr)
     return 0
 
 

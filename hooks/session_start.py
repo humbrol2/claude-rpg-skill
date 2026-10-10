@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """SessionStart hook for RPG mode.
 
-Detects whether the current chat is operating in an RPG context (by checking
-for a campaign memory directory) and, if so, builds the registry and emits a
-canon summary as additionalContext for the session.
+Detects whether the current chat is operating in an RPG context (a campaign
+memory directory near the CWD, or this project's own memory dir) and, if so,
+emits the boot summary from tools/boot_summary.py plus the mandatory
+disciplines as additionalContext — so Claude operates in RPG mode from turn
+1 even before /rpg is typed.
 
-Designed to be invoked from ~/.claude/settings.json as a SessionStart hook.
-Emits a JSON envelope on stdout per Claude Code hook contract.
+Registered in ~/.claude/settings.json as a SessionStart hook (it cannot live
+in the skill's own hooks: frontmatter, because those only register once the
+skill is invoked). Emits a JSON envelope on stdout per the hook contract.
 """
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -21,156 +23,55 @@ try:
 except (AttributeError, OSError):
     pass
 
+TOOLS_DIR = Path(__file__).resolve().parent.parent / "tools"
+sys.path.insert(0, str(TOOLS_DIR))
+from common import find_campaign_dir  # noqa: E402
+from boot_summary import build_summary  # noqa: E402
 
-def find_memory_dir() -> Path | None:
-    """Find an RPG memory directory near the CWD or in known project locations."""
+DISCIPLINES = """### Mandatory disciplines (from SKILL.md)
+- **Canon-check before invoking any named entity.** `python ~/.claude/skills/rpg/tools/canon_check.py <name>`; NOT FOUND → ask the player, do not invent.
+- **Ledger consult before any financial claim.** Numbers come from `ledger.py show`, never working memory. In-scene payments: `ledger.py post` in the same response.
+- **Time-skip default 1–3 days; hard ceiling 7 days per response.** Major beats get their own response; no chaining a beat to a skip.
+- **NPC stubs are blocking.** A named NPC who speaks gets a stub file and a MEMORY.md index line before narration continues.
+- **Major scenes pause for PC dialogue.** Set the scene, NPCs speak, hand the floor to the player. Never narrate the PC's interior or unstated actions.
+- **Uncertain outcomes roll.** `roll.py` — never a result from the narrator's head.
+
+If anything is uncertain — **defer to the player, do not invent.**"""
+
+
+def find_memory_dir() -> tuple[Path, bool] | None:
+    """(memory_dir, is_project_memory). The second is True when the directory
+    is this project's own auto-memory dir, which the harness already loads
+    into context, so the hook must not echo MEMORY.md a second time."""
     cwd = Path.cwd()
-
-    # Walk up from CWD looking for RPG_CAMPAIGN.md or memory/MEMORY.md
-    for ancestor in [cwd] + list(cwd.parents):
-        if (ancestor / "RPG_CAMPAIGN.md").exists():
-            for line in (ancestor / "RPG_CAMPAIGN.md").read_text(encoding="utf-8").splitlines():
-                if ":" in line and "memory_dir" in line:
-                    path_str = line.split(":", 1)[1].strip()
-                    candidate = Path(path_str).expanduser()
-                    if candidate.exists():
-                        return candidate
-        if (ancestor / "memory" / "MEMORY.md").exists():
-            return ancestor / "memory"
-        if ancestor == ancestor.parent:
-            break
-
-    # Check ~/.claude/projects/*/memory
+    campaign = find_campaign_dir(cwd)
+    if campaign is not None:
+        return campaign, False
     home = Path.home() / ".claude" / "projects"
     if home.exists():
-        # Match by current working directory mapping
         cwd_marker = str(cwd).replace(":", "-").replace("\\", "-").replace("/", "-")
         for project_dir in home.iterdir():
-            if not project_dir.is_dir():
-                continue
-            if cwd_marker.lower() in project_dir.name.lower():
+            if project_dir.is_dir() and cwd_marker.lower() in project_dir.name.lower():
                 mem = project_dir / "memory"
                 if (mem / "MEMORY.md").exists():
-                    return mem
+                    return mem, True
     return None
 
 
-def build_summary(memory_dir: Path) -> str:
-    """Compose a tight RPG-state summary for session bootstrap."""
-    lines = []
-    lines.append("**RPG context detected.** Operating in RPG mode for this session.")
-    lines.append(f"Memory directory: {memory_dir}")
-    lines.append("")
-
-    # Skill reference
-    lines.append("Skill instructions: ~/.claude/skills/rpg/SKILL.md")
-    lines.append("")
-
-    # MEMORY.md index (lightweight)
-    mem_index = memory_dir / "MEMORY.md"
-    if mem_index.exists():
-        text = mem_index.read_text(encoding="utf-8")
-        lines.append("### Memory index (MEMORY.md)")
-        lines.append("```")
-        lines.append(text.strip())
-        lines.append("```")
-        lines.append("")
-
-    # Registry stats
-    registry = memory_dir / "registry.json"
-    if registry.exists():
-        with open(registry, "r", encoding="utf-8") as f:
-            reg = json.load(f)
-        lines.append(f"### Canon registry: {reg.get('count', 0)} entities")
-        for type_name, names in reg.get("by_type", {}).items():
-            lines.append(f"  - {type_name}: {len(names)}")
-        lines.append("")
-
-    # Ledger
-    ledger_path = memory_dir / "economy" / "ledger.json"
-    if ledger_path.exists():
-        with open(ledger_path, "r", encoding="utf-8") as f:
-            ledger = json.load(f)
-        liq = ledger.get("liquid", {})
-        total_liq = sum(v for k, v in liq.items() if k != "floor")
-        weekly_realized = sum(i.get("amount", 0) for i in ledger.get("weekly_realized_inflows", []))
-        weekly_unrealized = sum(v.get("valuation", 0) * v.get("weekly_unrealized_gain_pct", 0) / 100
-                                 for v in ledger.get("vehicles", []))
-        lines.append(f"### Ledger (Day {ledger.get('as_of_day', '?')})")
-        lines.append(f"  Liquid: ${total_liq:.2f}M")
-        lines.append(f"  Weekly profit: ~${weekly_realized + weekly_unrealized:.2f}M combined")
-        lines.append("")
-
-    # State files
-    state_dir = memory_dir / "state"
-    if state_dir.exists():
-        for name in ("character.json", "research.json", "fleet.json", "locations.json",
-                     "threads.json", "cover.json", "secrecy.json"):
-            path = state_dir / name
-            if not path.exists():
-                continue
-            with open(path, "r", encoding="utf-8") as f:
-                s = json.load(f)
-            # Summarize one-line per file
-            if name == "character.json":
-                true_name = s.get("true_name", "<unset>")
-                covers = len(s.get("cover_identities", []))
-                heritage = len(s.get("heritage_standings", []))
-                lines.append(f"  PC: {true_name} ({covers} cover identities, {heritage} heritage standings)")
-            elif name == "research.json":
-                domains = len(s.get("domains", []))
-                projects = len([p for p in s.get("active_projects", []) if p.get("progress_pct", 0) < 100])
-                lines.append(f"  Research: {domains} domains, {projects} active projects")
-            elif name == "fleet.json":
-                ships = len(s.get("ships", []))
-                droid_total = s.get("droids", {}).get("total", 0)
-                lines.append(f"  Fleet: {ships} ships, {droid_total} droids")
-            elif name == "locations.json":
-                bases = len(s.get("bases", []))
-                stations = len(s.get("stations", []))
-                construction = len([c for c in s.get("construction_sites", [])
-                                    if c.get("completion_pct", 0) < 100])
-                lines.append(f"  Locations: {bases} bases, {stations} stations, {construction} active construction")
-            elif name == "threads.json":
-                open_t = len(s.get("open_threads", []))
-                lines.append(f"  Open threads: {open_t}")
-            elif name == "cover.json":
-                covers = len(s.get("active_covers", []))
-                lines.append(f"  Cover identities: primary={s.get('primary_identity', '<unset>')}, {covers} active covers")
-            elif name == "secrecy.json":
-                inner = len(s.get("inner_circle", []))
-                partial = len(s.get("partial_read_in", []))
-                lines.append(f"  Read-in: {inner} inner-circle, {partial} partial")
-        lines.append("")
-
-    # Reminders
-    lines.append("### Mandatory disciplines (from SKILL.md)")
-    lines.append("- **Canon-check before invoking any named entity.** Run `python ~/.claude/skills/rpg/tools/canon_check.py <name>` if uncertain. NOT FOUND → ask user, do not invent.")
-    lines.append("- **Ledger consult before any numerical financial claim.** Run `python ~/.claude/skills/rpg/tools/ledger_state.py`. Always report numbers from the ledger, never from working memory.")
-    lines.append("- **Time-skip default 1 week max** unless user explicitly approves longer. Each skip runs ledger_advance + state_advance.")
-    lines.append("- **Major scenes pause for PC dialogue.** Set the scene, NPCs speak, hand the floor to the player.")
-    lines.append("- **Concise updates.** Bullets, lead with changes, skip steady-state, always end with liquid + weekly profit line.")
-    lines.append("")
-    lines.append("If anything is uncertain — **defer to the user, do not invent.**")
-
-    return "\n".join(lines)
-
-
 def main() -> int:
-    memory_dir = find_memory_dir()
-    if memory_dir is None:
-        # Not in an RPG context — emit nothing
+    found = find_memory_dir()
+    if found is None:
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": ""}}))
         return 0
-
-    summary = build_summary(memory_dir)
-    envelope = {
-        "hookSpecificOutput": {
-            "hookEventName": "SessionStart",
-            "additionalContext": summary,
-        }
-    }
-    print(json.dumps(envelope))
+    memory_dir, is_project_memory = found
+    summary = "\n".join([
+        "**RPG context detected.** Operating in RPG mode for this session. Invoke `/rpg` to boot fully.",
+        "Skill instructions: ~/.claude/skills/rpg/SKILL.md",
+        "",
+        build_summary(memory_dir, include_index=not is_project_memory),
+        DISCIPLINES,
+    ])
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": summary}}))
     return 0
 
 

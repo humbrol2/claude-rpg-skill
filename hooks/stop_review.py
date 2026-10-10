@@ -10,6 +10,7 @@ This is reactive — the response is already sent — but it surfaces the issue
 """
 from __future__ import annotations
 
+import difflib
 import json
 import re
 import sys
@@ -22,20 +23,16 @@ except (AttributeError, OSError):
     pass
 
 
+TOOLS_DIR = Path(__file__).resolve().parent.parent / "tools"
+sys.path.insert(0, str(TOOLS_DIR))
+from common import find_campaign_dir  # noqa: E402
+
+
 def find_memory_dir(cwd: Path) -> Path | None:
-    """Same logic as session_start.py."""
-    for ancestor in [cwd] + list(cwd.parents):
-        if (ancestor / "RPG_CAMPAIGN.md").exists():
-            for line in (ancestor / "RPG_CAMPAIGN.md").read_text(encoding="utf-8").splitlines():
-                if ":" in line and "memory_dir" in line:
-                    path_str = line.split(":", 1)[1].strip()
-                    candidate = Path(path_str).expanduser()
-                    if candidate.exists():
-                        return candidate
-        if (ancestor / "memory" / "MEMORY.md").exists():
-            return ancestor / "memory"
-        if ancestor == ancestor.parent:
-            break
+    """The campaign for this session's CWD, else this project's auto-memory."""
+    campaign = find_campaign_dir(cwd)
+    if campaign is not None:
+        return campaign
 
     home = Path.home() / ".claude" / "projects"
     if home.exists():
@@ -58,39 +55,81 @@ def load_registry(memory_dir: Path) -> dict | None:
         return json.load(f)
 
 
-def strip_heritage_suffix(name: str) -> str:
-    """Drakari suffix-strip: e.g. Aren-Vor → Aren."""
-    lower = name.lower()
-    for suffix in ["-vor-korr-threll", "-vor-korr", "-vor", "-korr-threll", "-korr",
-                   "-threll", "-saen", "-vellith", "-daresh", "-khorr"]:
-        if lower.endswith(suffix):
-            return name[: -len(suffix)]
-    return name
+def normalize(name: str) -> str:
+    return re.sub(r"[-_\s]+", " ", name.strip().lower())
+
+
+def load_ignore(memory_dir: Path) -> set[str]:
+    """Per-campaign suppression list for vocabulary that is capitalized but is not
+    an entity — rules terms (skill names, DC bands), the currency, headers.
+
+    Lives with the campaign rather than in COMMON_NON_NAMES because it is
+    campaign-specific: one campaign's rules term is another's NPC. Two sources,
+    merged:
+    - `ignore_names: Stealth, Perception, ...` lines in the campaign's
+      RPG_CAMPAIGN.md (comma-separated; the line may repeat).
+    - canon_ignore.txt, one entry per line, '#' starts a comment.
+    Matching is case- and separator-insensitive.
+    """
+    names: set[str] = set()
+    marker = memory_dir / "RPG_CAMPAIGN.md"
+    if marker.exists():
+        for line in marker.read_text(encoding="utf-8").splitlines():
+            m = re.match(r"^\s*(?:-\s+)?ignore[ _-]?names\s*:\s*(.*)$",
+                         re.sub(r"[*`]", "", line), re.IGNORECASE)
+            if m:
+                names.update(normalize(n) for n in m.group(1).split(",") if n.strip())
+    path = memory_dir / "canon_ignore.txt"
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.split("#", 1)[0].strip()
+            if line:
+                names.add(normalize(line))
+    return names
+
+
+# Near-miss spelling of a registered name ("Tallows", "Merrins") is the same
+# entity, not an invention; below this ratio names are genuinely different
+# ("Hallow" vs "Tallow" scores 0.83).
+FUZZY_MATCH_RATIO = 0.85
+
+
+def _contains_words(outer: tuple[str, ...], inner: tuple[str, ...]) -> bool:
+    n = len(inner)
+    return any(outer[i:i + n] == inner for i in range(len(outer) - n + 1))
 
 
 def is_canon_name(name: str, registry: dict) -> bool:
-    """Check whether a candidate name resolves in the registry."""
+    """Check whether a candidate name resolves against registry names or aliases.
+
+    Beyond exact hits, a candidate resolves when its words appear as a
+    contiguous run inside a registered name ("Sallow Street" in "Sallow Street
+    house") or a registered name's words appear inside it (honorifics and
+    heritage suffixes: "Lady Merrin", "Name-vor"), or when it is a near-miss
+    spelling of one.
+    """
     if not registry:
         return False
-    key = name.lower()
-    if key in registry["entities"]:
+    key = normalize(name)
+    known = set(registry["entities"]) | set(registry["by_alias"])
+    if key in known:
         return True
-    if key in registry["by_alias"]:
-        return True
-    bare = strip_heritage_suffix(name).lower()
-    if bare != key:
-        if bare in registry["entities"]:
+    words = tuple(key.split())
+    for k in known:
+        k_words = tuple(k.split())
+        if _contains_words(k_words, words) or _contains_words(words, k_words):
             return True
-        if bare in registry["by_alias"]:
-            return True
-    # Substring fallback — match if name is contained in any entity name
-    for k in registry["entities"]:
-        if bare in k or k in bare:
+        if difflib.SequenceMatcher(None, key, k).ratio() >= FUZZY_MATCH_RATIO:
             return True
     return False
 
 
+RPG_COMMAND = "<command-name>/rpg</command-name>"
+
+
 # Common English words that look like names but aren't. Used to suppress false positives.
+# Campaign-specific vocabulary must NOT be added here — it belongs in the registry
+# (as entities or aliases), which is per-campaign.
 COMMON_NON_NAMES = {
     # Pronouns + articles
     "I", "The", "A", "An", "He", "She", "They", "We", "You", "It", "His", "Her", "Their", "My", "Your",
@@ -99,51 +138,107 @@ COMMON_NON_NAMES = {
     "Across", "Through", "After", "Before", "During", "While", "Despite", "Although", "Though",
     "Above", "Below", "Beyond", "Between", "Behind", "Beside", "Within", "Without",
     "Both", "Either", "Neither", "Each", "Every", "Some", "Most", "Many", "Few", "All",
-    "First", "Second", "Third", "Last", "Next", "Last",
+    "First", "Second", "Third", "Last", "Next",
     "Now", "Soon", "Later", "Often", "Always", "Sometimes", "Never", "Once", "Twice",
     "There", "Here", "Where", "How", "Why", "What", "Who", "Which",
     "Just", "Quite", "Very", "Rather", "Really", "Truly", "Indeed",
     "Take", "Make", "Have", "Has", "Had", "Do", "Does", "Did", "Be", "Is", "Are", "Was", "Were",
     "Tell", "Say", "Said", "Go", "Goes", "Went", "Come", "Came", "Look", "Looked",
     "Up", "Down", "Out", "In", "On", "Off", "Over", "Under",
-    "Time", "Day", "Week", "Month", "Year",
-    # Setting / species (always-known background)
-    "Lilim", "Drakari", "Aetheran", "Verse",
-    # Setting locations + venues (common references)
-    "Hadlea", "Lockwell", "Tellurian", "Vethrin", "Confluence", "Throne", "Closure",
-    "Slow", "Lamp", "Glass", "Reach", "Sourcefall", "Threlling", "Kethra",
-    # Mechanical / structural
-    "Mark", "Domain", "Sig", "Phase", "Cycle", "ASC", "Day", "Hour", "Minute",
+    "Time", "Day", "Week", "Month", "Year", "Hour", "Minute",
     # Titles
     "Mr", "Mrs", "Ms", "Sir", "Dr", "Captain", "Father", "Mother", "Brother", "Sister",
 }
 
 
+def _strip_non_narration(text: str) -> str:
+    """Remove text regions that can't contain narrated entities: code blocks,
+    inline code, markdown link targets, file paths, and URLs."""
+    text = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
+    text = re.sub(r"`[^`]*`", " ", text)
+    text = re.sub(r"\]\([^)]*\)", "] ", text)  # markdown link targets
+    # Paths and URLs only — NOT every token containing a slash. A blanket slash
+    # rule also eats ordinary prose ("cr/day", "and/or", "24/7") together with
+    # the sentence-ending punctuation in front of it, which makes the NEXT
+    # sentence's opening capital look mid-sentence and flags it as a name.
+    text = re.sub(r"\b[a-zA-Z][a-zA-Z0-9+.-]*://\S+", " ", text)  # URLs
+    text = re.sub(r"\S*\\\S*", " ", text)                          # Windows paths
+    text = re.sub(r"(?<![\w.])\.{0,2}/\S+", " ", text)             # /abs ./rel ../rel
+    text = re.sub(r"\S+/\S+/\S+", " ", text)                       # multi-segment paths
+    return text
+
+
 def extract_candidate_names(text: str) -> list[str]:
     """Extract capitalized words that look like proper names.
 
-    Patterns matched:
-    - Capitalized single words at sentence-start or mid-sentence (most common)
-    - Hyphenated names (Saen-Daresh, Korr-Threll-Vor, etc.)
-    - Two-word names (Sennit Vethrin-Saen)
+    A candidate only counts if it appears capitalized at least once
+    MID-SENTENCE — sentence-initial, heading, bullet, and quote-opening
+    capitals are ordinary English, and counting them buries real findings
+    in noise whenever the response contains prose.
     """
+    text = _strip_non_narration(text)
     candidates = set()
 
-    # Match capitalized words including hyphens and trailing-suffix patterns
-    # Limit to mid-sentence positions to reduce false positives from sentence starts
     pattern = re.compile(r"\b([A-Z][a-z]+(?:[-' ][A-Z][a-zA-Z]+)*)\b")
     for match in pattern.finditer(text):
         name = match.group(1)
-        # Skip very short
         if len(name) < 3:
             continue
-        # Skip common non-names
         first_word = name.split(" ")[0].split("-")[0]
         if first_word in COMMON_NON_NAMES:
+            continue
+        # Mid-sentence check: what precedes the match must be ordinary
+        # running prose on the SAME line — a sentence boundary, heading,
+        # bullet, quote-opening, table-cell boundary, or line start all mean
+        # ordinary English capitalization, not a proper name.
+        #
+        # '|' is in the set because a markdown table cell begins a fresh
+        # capitalization context exactly like a bullet does. Without it every
+        # cell-initial word ("| Route |", "| Work the terminals") reads as an
+        # entity, and a response containing one option table buries any real
+        # finding under a dozen ordinary verbs.
+        line_prefix = text[: match.start()].rsplit("\n", 1)[-1].strip()
+        if not line_prefix or line_prefix[-1] in '.!?:;#*->|—–"“‘([':
             continue
         candidates.add(name)
 
     return sorted(candidates)
+
+
+def session_booted_rpg(transcript_path: Path) -> bool:
+    """True when this session invoked the rpg skill, by tool call or typed /rpg.
+
+    A campaign pointer near the CWD only says a campaign EXISTS there; it says
+    nothing about what this chat is for. Without this gate every unrelated chat
+    opened under that directory gets its product and library names flagged as
+    unregistered entities on every turn.
+    """
+    if not transcript_path.exists():
+        return False
+    with open(transcript_path, "r", encoding="utf-8") as f:
+        for line in f:
+            if "rpg" not in line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            role = entry.get("type")
+            content = entry.get("message", {}).get("content", [])
+            if isinstance(content, str):
+                content = [{"type": "text", "text": content}]
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if role == "assistant" and block.get("type") == "tool_use":
+                    if block.get("name") == "Skill" and block.get("input", {}).get("skill") == "rpg":
+                        return True
+                if role == "user" and block.get("type") == "text":
+                    # At the start only: a compaction summary that merely quotes
+                    # the tag mid-text re-armed the hook in a non-RPG chat.
+                    if block.get("text", "").lstrip().startswith(RPG_COMMAND):
+                        return True
+    return False
 
 
 def read_last_assistant_message(transcript_path: Path) -> str:
@@ -191,18 +286,38 @@ def main() -> int:
         print(json.dumps({}))
         return 0
 
+    # No campaign canon on file (only feedback/user/reference entries) means
+    # there is no narration to guard — every flag would be meta-conversation
+    # noise. Stay silent until a campaign actually has entities.
+    has_canon = any(
+        ent.get("file", "").startswith(("project_", "entity_"))
+        for ent in registry.get("entities", {}).values()
+    )
+    if not has_canon:
+        print(json.dumps({}))
+        return 0
+
     if not transcript_path_str:
         print(json.dumps({}))
         return 0
 
     transcript = Path(transcript_path_str)
+    if not session_booted_rpg(transcript):
+        print(json.dumps({}))
+        return 0
+
     last_msg = read_last_assistant_message(transcript)
     if not last_msg:
         print(json.dumps({}))
         return 0
 
+    ignore = load_ignore(memory_dir)
     candidates = extract_candidate_names(last_msg)
-    unrecognized = [n for n in candidates if not is_canon_name(n, registry)]
+    unrecognized = [
+        n for n in candidates
+        if normalize(n) not in ignore
+        and not is_canon_name(n, registry)
+    ]
 
     if not unrecognized:
         # All names resolved cleanly
